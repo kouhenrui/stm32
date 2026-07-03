@@ -1,0 +1,25 @@
+schema: spec-driven
+
+context: |
+  项目：STM32F103 嵌入式固件
+  硬件：STM32F103 开发板 + 0.9" OLED（128×64 SSD1306）+ ESP8266 WiFi + 蜂鸣器
+  语言：C（STM32 HAL / 标准库）
+  工具链：STM32CubeIDE / Keil / PlatformIO
+  通信：OLED 优先 I2C；ESP8266 使用 UART（AT 指令）
+  约定：
+    - 引脚定义集中在 Core/Inc/pin_config.h（或等价头文件）
+    - 驱动按模块拆分：oled、esp8266、buzzer
+    - 中断服务函数保持简短，业务逻辑放主循环或 RTOS 任务
+    - 新增外设或改接线须同步更新 openspec/specs/hardware/spec.md
+  领域：嵌入式 IoT 终端，本地显示 + 无线上报/控制
+
+rules:
+  proposal:
+    - 明确硬件依赖与引脚是否变更
+    - 包含 Non-goals（本次不做的范围）
+  design:
+    - 说明使用的 HAL 外设（I2C/UART/TIM/GPIO）
+    - 标注阻塞 vs 非阻塞、是否使用 DMA
+  tasks:
+    - 按驱动层 → 应用层顺序拆分
+    - 每项任务应可独立验证（如 OLED 点亮、蜂鸣器响一声）
