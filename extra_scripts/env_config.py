@@ -25,8 +25,9 @@ DEFAULTS = {
     "FEATURE_ESP8266": "1",
     "FEATURE_WEATHER": "1",
     # ESP8266
-    "ESP_AT_TIMEOUT_MS": "3000",
-    "ESP_WIFI_RETRY_MAX": "3",
+    "ESP_AT_TIMEOUT_MS": "8000",
+    "ESP_WIFI_RETRY_MAX": "5",
+    "ESP_WIFI_JAP_TIMEOUT_MS": "35000",
 }
 
 
@@ -93,6 +94,7 @@ feature_esp8266 = env_flag("FEATURE_ESP8266")
 feature_weather = env_flag("FEATURE_WEATHER")
 esp_at_timeout = env_int("ESP_AT_TIMEOUT_MS")
 esp_wifi_retry = env_int("ESP_WIFI_RETRY_MAX")
+esp_wifi_jap_timeout = env_int("ESP_WIFI_JAP_TIMEOUT_MS")
 
 if feature_weather and not feature_esp8266:
     print("ERROR: FEATURE_WEATHER=1 需要 FEATURE_ESP8266=1")
@@ -132,6 +134,7 @@ cppdefines = [
     ("FEATURE_WEATHER", feature_weather),
     ("ESP_AT_TIMEOUT_MS", esp_at_timeout),
     ("ESP_WIFI_RETRY_MAX", esp_wifi_retry),
+    ("ESP_WIFI_JAP_TIMEOUT_MS", esp_wifi_jap_timeout),
 ]
 
 for i, (ssid, password) in enumerate(wifi_pairs, start=1):

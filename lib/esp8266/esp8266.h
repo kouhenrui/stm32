@@ -65,6 +65,12 @@ const char *esp8266_wifi_get_connected_ssid(void);
  */
 const char *esp8266_status_string(esp8266_status_t status);
 
+/** @brief 最近一次 WiFi 连接失败原因（用于 OLED 显示） */
+const char *esp8266_wifi_last_error(void);
+
+/** @brief 扫描周围是否存在指定 SSID（仅 2.4GHz 可见） */
+bool esp8266_wifi_ssid_visible(const char *ssid);
+
 /**
  * @brief HTTP GET（明文 TCP，ESP8266 AT 固件）
  * @param host 主机名

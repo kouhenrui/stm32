@@ -58,7 +58,7 @@ int main(void)
 #if FEATURE_ESP8266
     esp8266_status_t at_status = esp8266_test_at();
     if (at_status != ESP8266_OK) {
-        oled_show_status("ESP8266", esp8266_status_string(at_status));
+        oled_show_status("AT TIMEOUT", "Check A2 A3 EN");
         while (1) {
             HAL_Delay(1000);
         }
@@ -67,11 +67,15 @@ int main(void)
     oled_show_status("ESP8266", "AT OK");
 
     uint8_t wifi_index = 0xFFU;
-    esp8266_status_t wifi_status = esp8266_wifi_connect_configured(&wifi_index);
-    if (wifi_status != ESP8266_OK) {
-        oled_show_status("WiFi", esp8266_status_string(wifi_status));
-        while (1) {
-            HAL_Delay(1000);
+    esp8266_status_t wifi_status = ESP8266_ERR_WIFI;
+    while (wifi_status != ESP8266_OK) {
+        oled_show_status("Scan WiFi", "2.4GHz only");
+        HAL_Delay(500);
+        oled_show_status("WiFi...", "Connecting");
+        wifi_status = esp8266_wifi_connect_configured(&wifi_index);
+        if (wifi_status != ESP8266_OK) {
+            oled_show_status(esp8266_wifi_last_error(), "Retry 15s");
+            HAL_Delay(15000);
         }
     }
 
