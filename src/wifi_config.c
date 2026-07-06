@@ -1,14 +1,33 @@
 #include "wifi_config.h"
 #include <string.h>
 
+#ifndef WIFI_SSID_1
+#define WIFI_SSID_1            "your-ssid"
+#endif
+#ifndef WIFI_PASSWORD_1
+#define WIFI_PASSWORD_1        "your-password"
+#endif
+#ifndef WIFI_SSID_2
+#define WIFI_SSID_2            "your-ssid-2"
+#endif
+#ifndef WIFI_PASSWORD_2
+#define WIFI_PASSWORD_2        "your-password-2"
+#endif
+#ifndef WIFI_SSID_3
+#define WIFI_SSID_3            "your-ssid-3"
+#endif
+#ifndef WIFI_PASSWORD_3
+#define WIFI_PASSWORD_3        "your-password-3"
+#endif
+
 /*
- * 在此添加多个 WiFi，按数组顺序依次尝试连接。
- * 以 "your-ssid" 开头的条目视为未配置，启动时自动跳过。
+ * WiFi 列表由 .env 注入（WIFI_SSID_1 / WIFI_PASSWORD_1 …）
+ * 见 extra_scripts/env_config.py
  */
 const wifi_profile_t g_wifi_profiles[] = {
-    { "your-ssid",      "your-password" },   /* 热点 1：家里 */
-    { "your-ssid-2",    "your-password-2" },  /* 热点 2：办公室 */
-    { "your-ssid-3",    "your-password-3" },  /* 热点 3：备用 */
+    { WIFI_SSID_1, WIFI_PASSWORD_1 },
+    { WIFI_SSID_2, WIFI_PASSWORD_2 },
+    { WIFI_SSID_3, WIFI_PASSWORD_3 },
 };
 
 const uint8_t g_wifi_profile_count = (uint8_t)(sizeof(g_wifi_profiles) / sizeof(g_wifi_profiles[0]));
@@ -18,11 +37,13 @@ bool wifi_profile_is_configured(const wifi_profile_t *profile)
     if (profile == NULL || profile->ssid == NULL || profile->password == NULL) {
         return false;
     }
-    if (profile->ssid[0] == '\0') {
+    if (profile->ssid[0] == '\0' || profile->password[0] == '\0') {
         return false;
     }
-    /* 跳过占位符（your-ssid、your-ssid-2 等） */
     if (strncmp(profile->ssid, "your-ssid", 9) == 0) {
+        return false;
+    }
+    if (strncmp(profile->password, "your-password", 13) == 0) {
         return false;
     }
     return true;

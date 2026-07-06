@@ -2,8 +2,10 @@
 #include "app_config.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #define ESP_RX_BUF_SIZE   256U
+#define ESP_HTTP_BUF_SIZE 1024U
 #define ESP_WIFI_CMD_SIZE 128U
 
 static UART_HandleTypeDef *esp_uart;
@@ -151,4 +153,163 @@ const char *esp8266_status_string(esp8266_status_t status)
     case ESP8266_ERR_WIFI:     return "WIFI FAIL";
     default:                   return "UNKNOWN";
     }
+}
+
+/** @brief 发送原始数据（无 \\r\\n） */
+static esp8266_status_t esp8266_send_raw(const uint8_t *data, uint16_t len, uint32_t timeout_ms)
+{
+    if (esp_uart == NULL || data == NULL || len == 0U) {
+        return ESP8266_ERR_RESPONSE;
+    }
+    if (HAL_UART_Transmit(esp_uart, (uint8_t *)data, len, timeout_ms) != HAL_OK) {
+        return ESP8266_ERR_TIMEOUT;
+    }
+    return ESP8266_OK;
+}
+
+/** @brief 从 HTTP 原始响应中提取 body（跳过 header） */
+static void http_extract_body(char *buf)
+{
+    char *body = strstr(buf, "\r\n\r\n");
+    if (body != NULL) {
+        body += 4;
+        memmove(buf, body, strlen(body) + 1U);
+    }
+}
+
+/** @brief 去掉 +IPD 前缀与 HTTP 头，保留 JSON body */
+static void http_normalize_response(char *buf)
+{
+    char *ipd = strstr(buf, "+IPD,");
+    char *closed;
+
+    if (ipd != NULL) {
+        char *data = strchr(ipd, ':');
+        if (data != NULL) {
+            data++;
+            memmove(buf, data, strlen(data) + 1U);
+        }
+    }
+
+    closed = strstr(buf, "CLOSED");
+    if (closed != NULL) {
+        *closed = '\0';
+    }
+
+    http_extract_body(buf);
+}
+
+esp8266_status_t esp8266_http_get(const char *host, uint16_t port, const char *path,
+                                  char *body_out, size_t body_max, size_t *body_len,
+                                  uint32_t timeout_ms)
+{
+    char cmd[ESP_WIFI_CMD_SIZE];
+    char req[256];
+    char http_buf[ESP_HTTP_BUF_SIZE];
+    int req_len;
+    size_t collected = 0;
+    bool got_ipd = false;
+
+    if (host == NULL || path == NULL || body_out == NULL || body_max == 0U || esp_uart == NULL) {
+        return ESP8266_ERR_RESPONSE;
+    }
+
+    req_len = snprintf(req, sizeof(req),
+                       "GET %s HTTP/1.1\r\n"
+                       "Host: %s\r\n"
+                       "Connection: close\r\n"
+                       "\r\n",
+                       path, host);
+    if (req_len <= 0 || (size_t)req_len >= sizeof(req)) {
+        return ESP8266_ERR_RESPONSE;
+    }
+
+    if (esp8266_send_cmd("AT+CIPMUX=0", "OK", ESP_AT_TIMEOUT_MS) != ESP8266_OK) {
+        return ESP8266_ERR_RESPONSE;
+    }
+
+    snprintf(cmd, sizeof(cmd), "AT+CIPSTART=\"TCP\",\"%s\",%u", host, (unsigned)port);
+    if (esp8266_send_cmd(cmd, "OK", 10000U) != ESP8266_OK) {
+        return ESP8266_ERR_RESPONSE;
+    }
+
+    snprintf(cmd, sizeof(cmd), "AT+CIPSEND=%d", req_len);
+    esp8266_flush_rx();
+    if (HAL_UART_Transmit(esp_uart, (uint8_t *)cmd, (uint16_t)strlen(cmd), ESP_AT_TIMEOUT_MS) != HAL_OK) {
+        esp8266_send_cmd("AT+CIPCLOSE", NULL, ESP_AT_TIMEOUT_MS);
+        return ESP8266_ERR_TIMEOUT;
+    }
+    HAL_UART_Transmit(esp_uart, (uint8_t *)"\r\n", 2, ESP_AT_TIMEOUT_MS);
+
+    uint32_t start = HAL_GetTick();
+    bool prompt = false;
+    memset(rx_buf, 0, sizeof(rx_buf));
+    size_t rx_len = 0;
+
+    while ((HAL_GetTick() - start) < ESP_AT_TIMEOUT_MS) {
+        uint8_t ch;
+        if (HAL_UART_Receive(esp_uart, &ch, 1, 50) == HAL_OK) {
+            if (rx_len < sizeof(rx_buf) - 1U) {
+                rx_buf[rx_len++] = (char)ch;
+                rx_buf[rx_len] = '\0';
+            }
+            if (strchr(rx_buf, '>') != NULL) {
+                prompt = true;
+                break;
+            }
+            if (strstr(rx_buf, "ERROR") != NULL) {
+                esp8266_send_cmd("AT+CIPCLOSE", NULL, ESP_AT_TIMEOUT_MS);
+                return ESP8266_ERR_RESPONSE;
+            }
+        }
+    }
+
+    if (!prompt) {
+        esp8266_send_cmd("AT+CIPCLOSE", NULL, ESP_AT_TIMEOUT_MS);
+        return ESP8266_ERR_TIMEOUT;
+    }
+
+    if (esp8266_send_raw((const uint8_t *)req, (uint16_t)req_len, ESP_AT_TIMEOUT_MS) != ESP8266_OK) {
+        esp8266_send_cmd("AT+CIPCLOSE", NULL, ESP_AT_TIMEOUT_MS);
+        return ESP8266_ERR_TIMEOUT;
+    }
+
+    memset(http_buf, 0, sizeof(http_buf));
+    start = HAL_GetTick();
+
+    while ((HAL_GetTick() - start) < timeout_ms) {
+        uint8_t ch;
+        if (HAL_UART_Receive(esp_uart, &ch, 1, 50) != HAL_OK) {
+            continue;
+        }
+
+        if (collected < sizeof(http_buf) - 1U) {
+            http_buf[collected++] = (char)ch;
+            http_buf[collected] = '\0';
+        }
+
+        if (!got_ipd && strstr(http_buf, "+IPD,") != NULL) {
+            got_ipd = true;
+        }
+
+        if (got_ipd && strstr(http_buf, "CLOSED") != NULL) {
+            break;
+        }
+    }
+
+    esp8266_send_cmd("AT+CIPCLOSE", NULL, ESP_AT_TIMEOUT_MS);
+
+    if (!got_ipd) {
+        return ESP8266_ERR_TIMEOUT;
+    }
+
+    http_normalize_response(http_buf);
+
+    if (body_len != NULL) {
+        *body_len = strlen(http_buf);
+    }
+    strncpy(body_out, http_buf, body_max - 1U);
+    body_out[body_max - 1U] = '\0';
+
+    return ESP8266_OK;
 }

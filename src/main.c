@@ -5,6 +5,13 @@
 #include "pin_config.h"
 #include "ssd1306.h"
 #include <stdio.h>
+#include <string.h>
+
+#if FEATURE_WEATHER
+#include "weather.h"
+#include "weather_config.h"
+#include "weather_ui.h"
+#endif
 
 I2C_HandleTypeDef hi2c1;
 UART_HandleTypeDef huart1;
@@ -17,36 +24,19 @@ static void MX_USART1_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 static void oled_show_status(const char *line1, const char *line2);
 
-/**
- * @brief 程序入口：初始化外设，完成启动自检后进入主循环
- */
+#if FEATURE_WEATHER
+static void log_print(const char *msg);
+static weather_status_t weather_fetch_and_show(bool show_updating);
+static void weather_main_loop(void);
+#endif
+
 int main(void)
 {
-    /* HAL_Init — STM32 HAL 库，初始化 SysTick、NVIC 等
-     * 定义: framework-stm32cubef1/.../stm32f1xx_hal.c */
     HAL_Init();
-
-    /* SystemClock_Config — 配置 HSI+PLL 系统时钟
-     * 定义: 本文件 static SystemClock_Config() */
     SystemClock_Config();
-
-    /* MX_GPIO_Init — 使能 GPIOA/GPIOB 时钟
-     * 定义: 本文件 static MX_GPIO_Init() */
     MX_GPIO_Init();
-
-    /* MX_I2C1_Init — 初始化 I2C1（400kHz，OLED）
-     * 定义: 本文件 static MX_I2C1_Init()
-     * 引脚 MSP: src/stm32f1xx_hal_msp.c HAL_I2C_MspInit() */
     MX_I2C1_Init();
-
-    /* MX_USART1_UART_Init — 初始化 USART1（调试串口 PA9/PA10）
-     * 定义: 本文件 static MX_USART1_UART_Init()
-     * 引脚 MSP: src/stm32f1xx_hal_msp.c HAL_UART_MspInit() */
     MX_USART1_UART_Init();
-
-    /* MX_USART2_UART_Init — 初始化 USART2（ESP8266，PA2/PA3）
-     * 定义: 本文件 static MX_USART2_UART_Init()
-     * 引脚 MSP: src/stm32f1xx_hal_msp.c HAL_UART_MspInit() */
     MX_USART2_UART_Init();
 
 #if FEATURE_BUZZER
@@ -67,59 +57,128 @@ int main(void)
 
 #if FEATURE_ESP8266
     esp8266_status_t at_status = esp8266_test_at();
-    if (at_status == ESP8266_OK) {
-        oled_show_status("ESP8266", "AT OK");
-    } else {
+    if (at_status != ESP8266_OK) {
         oled_show_status("ESP8266", esp8266_status_string(at_status));
+        while (1) {
+            HAL_Delay(1000);
+        }
     }
+
+    oled_show_status("ESP8266", "AT OK");
 
     uint8_t wifi_index = 0xFFU;
     esp8266_status_t wifi_status = esp8266_wifi_connect_configured(&wifi_index);
-    if (wifi_status == ESP8266_OK) {
-        oled_show_status("WiFi OK", esp8266_wifi_get_connected_ssid());
-    } else {
+    if (wifi_status != ESP8266_OK) {
         oled_show_status("WiFi", esp8266_status_string(wifi_status));
+        while (1) {
+            HAL_Delay(1000);
+        }
     }
+
+#if FEATURE_WEATHER
+    oled_show_status("WiFi OK", esp8266_wifi_get_connected_ssid());
+    HAL_Delay(800);
+
+    {
+        weather_status_t boot_status = weather_fetch_and_show(false);
+        if (boot_status != WEATHER_OK) {
+            if (weather_has_last()) {
+                weather_ui_draw(weather_get_last(), "Retry...");
+            } else {
+                weather_ui_draw_error("Weather", weather_status_string(boot_status));
+            }
+        }
+    }
+
+    weather_main_loop();
+#else
+    oled_show_status("WiFi OK", esp8266_wifi_get_connected_ssid());
+    while (1) {
+        HAL_Delay(1000);
+    }
+#endif
+
 #else
     oled_show_status("OLED Test", "OK");
+    while (1) {
+        HAL_Delay(1000);
+    }
 #endif
 
 #if FEATURE_BUZZER
     buzzer_beep(100);
 #endif
+}
 
-    while (1) {
-        /* HAL_Delay — 阻塞延时，依赖 SysTick 时基
-         * 定义: framework-stm32cubef1/.../stm32f1xx_hal.c */
-        HAL_Delay(1000);
+#if FEATURE_WEATHER
+static void log_print(const char *msg)
+{
+    if (msg != NULL) {
+        HAL_UART_Transmit(&huart1, (uint8_t *)msg, (uint16_t)strlen(msg), 1000);
     }
 }
 
-/**
- * @brief 在 OLED 上显示两行文本并刷新
- * @param line1 第一行（页 0）
- * @param line2 第二行（页 2）
- */
+static weather_status_t weather_fetch_and_show(bool show_updating)
+{
+    weather_info_t info;
+    weather_status_t status;
+
+    if (show_updating && weather_has_last()) {
+        weather_ui_draw(weather_get_last(), "Updating...");
+    }
+
+    status = weather_fetch(&info);
+    log_print("weather fetch: ");
+    log_print(weather_status_string(status));
+    log_print("\r\n");
+
+    if (status == WEATHER_OK) {
+        weather_ui_draw(&info, NULL);
+    }
+
+    return status;
+}
+
+static void weather_main_loop(void)
+{
+    uint32_t last_attempt = HAL_GetTick();
+    bool last_ok = weather_has_last();
+
+    while (1) {
+        uint32_t now = HAL_GetTick();
+        uint32_t interval = last_ok ? WEATHER_REFRESH_MS : WEATHER_RETRY_MS;
+
+        if ((now - last_attempt) >= interval) {
+            weather_status_t status = weather_fetch_and_show(last_ok);
+
+            last_attempt = now;
+            if (status == WEATHER_OK) {
+                last_ok = true;
+            } else if (weather_has_last()) {
+                weather_ui_draw(weather_get_last(), "Updating...");
+            } else {
+                weather_ui_draw_error("Weather", weather_status_string(status));
+            }
+        }
+
+        HAL_Delay(500);
+    }
+}
+#endif
+
 static void oled_show_status(const char *line1, const char *line2)
 {
-    /* ssd1306_clear / ssd1306_draw_string / ssd1306_update
-     * 定义: lib/oled/ssd1306.c */
     ssd1306_clear();
     ssd1306_draw_string(0, 0, line1);
     ssd1306_draw_string(0, 2, line2);
     ssd1306_update();
 }
 
-/**
- * @brief 配置系统时钟：HSI + PLL，SYSCLK 64MHz
- */
 static void SystemClock_Config(void)
 {
     RCC_OscInitTypeDef osc = {0};
     RCC_ClkInitTypeDef clk = {0};
 
-    /* HAL_RCC_OscConfig / HAL_RCC_ClockConfig — RCC 时钟配置
-     * 定义: framework-stm32cubef1/.../stm32f1xx_hal_rcc.c */
     osc.OscillatorType = RCC_OSCILLATORTYPE_HSI;
     osc.HSIState = RCC_HSI_ON;
     osc.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
@@ -141,14 +200,12 @@ static void SystemClock_Config(void)
     }
 }
 
-/** @brief 使能 GPIOA / GPIOB 时钟 */
 static void MX_GPIO_Init(void)
 {
     __HAL_RCC_GPIOA_CLK_ENABLE();
     __HAL_RCC_GPIOB_CLK_ENABLE();
 }
 
-/** @brief 初始化 I2C1（400kHz，供 OLED 使用） */
 static void MX_I2C1_Init(void)
 {
     hi2c1.Instance = I2C1;
@@ -160,13 +217,11 @@ static void MX_I2C1_Init(void)
     hi2c1.Init.OwnAddress2 = 0;
     hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
     hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-    /* HAL_I2C_Init — 定义: framework-stm32cubef1/.../stm32f1xx_hal_i2c.c */
     if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
         Error_Handler();
     }
 }
 
-/** @brief 初始化 USART1（调试日志，PA9/PA10） */
 static void MX_USART1_UART_Init(void)
 {
     huart1.Instance = USART1;
@@ -177,13 +232,11 @@ static void MX_USART1_UART_Init(void)
     huart1.Init.Mode = UART_MODE_TX_RX;
     huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
     huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-    /* HAL_UART_Init — 定义: framework-stm32cubef1/.../stm32f1xx_hal_uart.c */
     if (HAL_UART_Init(&huart1) != HAL_OK) {
         Error_Handler();
     }
 }
 
-/** @brief 初始化 USART2（ESP8266，PA2/PA3） */
 static void MX_USART2_UART_Init(void)
 {
     huart2.Instance = USART2;
@@ -207,11 +260,6 @@ void Error_Handler(void)
 }
 
 #ifdef USE_FULL_ASSERT
-/**
- * @brief HAL 断言失败回调
- * @param file 源文件名
- * @param line 行号
- */
 void assert_failed(uint8_t *file, uint32_t line)
 {
     (void)file;

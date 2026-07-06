@@ -2,6 +2,7 @@
 #define ESP8266_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include "stm32f1xx_hal.h"
 #include "wifi_config.h"
@@ -63,5 +64,19 @@ const char *esp8266_wifi_get_connected_ssid(void);
  * @return 静态字符串，勿 free
  */
 const char *esp8266_status_string(esp8266_status_t status);
+
+/**
+ * @brief HTTP GET（明文 TCP，ESP8266 AT 固件）
+ * @param host 主机名
+ * @param port 端口
+ * @param path 请求路径（含 query）
+ * @param body_out 响应体输出缓冲
+ * @param body_max 缓冲大小
+ * @param body_len 实际写入长度，可 NULL
+ * @param timeout_ms 总超时
+ */
+esp8266_status_t esp8266_http_get(const char *host, uint16_t port, const char *path,
+                                  char *body_out, size_t body_max, size_t *body_len,
+                                  uint32_t timeout_ms);
 
 #endif /* ESP8266_H */

@@ -10,7 +10,7 @@ typedef struct {
     const char *password;
 } wifi_profile_t;
 
-/** 已配置的 WiFi 列表（在 src/wifi_config.c 中编辑） */
+/** 已配置的 WiFi 列表（凭据来自 .env，见 src/wifi_config.c） */
 extern const wifi_profile_t g_wifi_profiles[];
 extern const uint8_t g_wifi_profile_count;
 
