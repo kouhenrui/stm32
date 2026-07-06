@@ -9,9 +9,9 @@
 | 主控 | STM32F103C8T6 | Cortex-M3，64KB Flash，20KB RAM |
 | 显示屏 | 0.9" OLED（128×64，SSD1306） | I2C，**u8g2** 字体（默认 8×13） |
 | 无线模块 | ESP8266 | UART AT 指令，115200 |
-| 蜂鸣器 | 有源蜂鸣器 | GPIO 驱动（PB0） |
+| 蜂鸣器 | 有源蜂鸣器 | GPIO 驱动（B0） |
 
-引脚定义见 [`include/pin_config.h`](include/pin_config.h)。**完整接线说明（OLED、蜂鸣器、ESP8266、调试串口、ST-Link）见 [`docs/硬件连接.md`](docs/硬件连接.md)。**
+引脚定义见 [`include/pin_config.h`](include/pin_config.h)。**完整接线说明（总体图 + 分模块图）见 [`docs/硬件连接.md`](docs/硬件连接.md)；文档规范见 [`docs/文档准则.md`](docs/文档准则.md)。**
 
 ## 项目结构
 
@@ -33,7 +33,8 @@ stm32/
 │   ├── esp8266/          # ESP8266 AT + HTTP GET
 │   └── weather/          # 天气拉取与 JSON 解析
 ├── docs/
-│   └── 硬件连接.md       # 全部模块接线说明
+│   ├── 硬件连接.md       # 总体 + 分模块接线说明
+│   └── 文档准则.md       # 文档编写规范（必读）
 ├── .env.example          # 环境变量模板（复制为 .env）
 ├── platformio.ini        # PlatformIO 工程配置
 └── README.md
